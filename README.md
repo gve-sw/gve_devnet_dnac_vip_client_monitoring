@@ -1,5 +1,10 @@
 # GVE DevNet DNAC VIP Client Monitoring
-The app will monitor VIP clients, e.g. executives or important guests, that are connected to the DNA Center. In case there are any issues, then an alert will be sent to proactively take action. 
+
+> Please note: the repository is an adaptation of the [GVE_DevNet_DNAC_Client_Monitoring](https://github.com/gve-sw/GVE_Devnet_DNAC_Client_Monitoring) repository
+
+Cisco DNA Center is a powerful network controller and management dashboard. While the dashboard allows you to monitor the clients in your network, it usually results in a reactive monitoring instead of a pro-active monitoring. For important executives and guests, it would be better to have pro-active monitoring in place to make sure that these cllients are connected to the network without any issue. This prototype shows how a script can monitor VIP clients, e.g. executives or important guests, that are connected to the DNA Center. In case there are any issues, then an alert will be sent to proactively take action. The flow of the script is as follows:
+
+![flow](IMAGES/flow.png)
 
 
 ## Contacts
@@ -8,6 +13,7 @@ The app will monitor VIP clients, e.g. executives or important guests, that are 
 ## Solution Components
 * Python 3
 * DNA Center
+* SMTP Server
 
 
 ## Installation/Configuration
@@ -66,7 +72,7 @@ The following commands are executed in the terminal.
     ```
 
 ## Usage
-Now it is time to launch the application! Simply type in the following command in your terminal:
+Now it is time to run your script! Simply type in the following command in your terminal:
 
     $ python app.py
 

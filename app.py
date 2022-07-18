@@ -19,17 +19,13 @@ __copyright__ = "Copyright (c) 2022 Cisco and/or its affiliates."
 __license__ = "Cisco Sample Code License, Version 1.1"
 
 # Import section
-import time
-
 from dnacentersdk import DNACenterAPI
-
 from dotenv import load_dotenv
 import os
 import smtplib
 from email.message import EmailMessage
-import json
 
-from config import USERS, MAC_CLIENTS, HEALTH_LOW, SNR, BW_LOW
+from config import USERS, HEALTH_LOW, SNR
 
 # Load environment variables
 load_dotenv()
@@ -45,16 +41,12 @@ RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 SMTP_SERVER_URL = os.getenv("SMTP_SERVER_URL")
 SMTP_SERVER_PORT = int(os.getenv("SMTP_SERVER_PORT"))
 
-MAX_ALERT = 1
-
-alert_count = 0 
-
 ## Helper Functions
-def send_email(MAC_CLIENT, body):
+def send_email(USER, body):
     message = EmailMessage()
     message.set_content(body)
 
-    message['Subject'] = f"DNAC VIP Client Monitoring alert for client {MAC_CLIENT}"
+    message['Subject'] = f"DNAC VIP Client Monitoring alert for user {USER}"
     message['From'] = "GVE DevNet DNAC VIP Client Monitoring"
     message['To'] = RECIPIENT_EMAIL
 
@@ -65,70 +57,118 @@ def send_email(MAC_CLIENT, body):
 
     print(f"---Email has been sent to {RECIPIENT_EMAIL}---")
 
+def send_email(USER, body):
+    message = EmailMessage()
+    message.set_content(body)
 
-def client_health_check(alert, client_health):
-    """
-    This function will check if the client health score {client_health} is above the predefined threshold
-    :param alert: parameter for alert to check if alert needs to be sent or not
-    :param client_health: client health score
-    :return: alert
-    """
-    if client_health <= HEALTH_LOW:
-        alert = True
-        print(f"**client Health too low: {client_health}, send email alert**")
-    return alert
+    message['Subject'] = f"DNAC VIP Client Monitoring alert for user {USER}"
+    message['From'] = "GVE DevNet DNAC VIP Client Monitoring" # Change this if needed
+    message['To'] = RECIPIENT_EMAIL
 
-def check_general_health(dna_center_api, MAC_CLIENT, user_detail=None):
-    global alert_count
+    server = smtplib.SMTP_SSL(SMTP_SERVER_URL, SMTP_SERVER_PORT)
+    server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+    server.send_message(message)
+    server.quit()
+
+    print(f"---Email has been sent to {RECIPIENT_EMAIL}---")
+
+
+def get_all_health_scores_from_user(user_details):
+    print("We are getting all health scores from users")
+    health_scores = []
+    for user_detail in user_details:
+        health_scores_dict = {}
+        user_detail = user_detail["userDetails"]
+        for health_score in user_detail["healthScore"]:
+            if health_score["healthType"] == "OVERALL":
+                overall_health_score = health_score["score"]
+        
+        health_scores_dict["score"] = overall_health_score
+        health_scores_dict["hostname"] = user_detail["hostName"]
+        health_scores_dict["id"] = user_detail["id"]
+        health_scores.append(health_scores_dict)
+        return health_scores
+        
+def convert_all_health_scores_dict_to_message(all_health_scores):
+    all_health_scores_message = ""
+    for health_score in all_health_scores:
+        all_health_scores_message += f"- {health_score['hostname']}\n"
+        all_health_scores_message += f"    * ID: {health_score['id']}\n"
+        all_health_scores_message += f"    * score: {health_score['score']}\n"
+    return all_health_scores_message
+
+
+def check_health_from_user_detail(user_detail, user_details):
     alert = False
-    
-    client_info = dna_center_api.clients.get_client_detail(mac_address=MAC_CLIENT)
-    print(json.dumps(client_info, indent=2))
-
-    # parse the client health score, ap name, snr, location
+    alert_reason_message = ""
+    user_detail = user_detail["userDetails"]
     try:
-        health_score = client_info['detail']['healthScore']
-        for score in health_score:
-            if score['healthType'] == 'OVERALL':
-                client_health = score['score']
-        ap_name = client_info['detail']['clientConnection']
-        snr = float(client_info['detail']['snr'])
-        location = client_info['detail']['location']
+        # print(json.dumps(user_detail, indent=2))
+        for health_score in user_detail["healthScore"]:
+            if health_score["healthType"] == "OVERALL":
+                overall_health_score = health_score["score"]
+
+        issue_count = user_detail["issueCount"]
+        rssi = float(user_detail["rssi"])
+        snr = float(user_detail["snr"])
     except Exception as e:
-        print('**An exception has occurred**')
+        print("An exception has occurred")
         print(e)
+        return 
 
-    alert = client_health_check(alert, client_health)
-
-    # Generic values for PoV
-    total_data_transfer = 101 
-
+    print("Checking the thresholds")
+    # check the thresholds
+    if overall_health_score <= HEALTH_LOW:
+        alert = True
+        alert_reason_message += f"- The overall health score is {overall_health_score}, which is below {HEALTH_LOW}\n"
     if snr <= SNR:
         alert = True
-    if total_data_transfer <= BW_LOW:
+        alert_reason_message += f"- The snr is {snr}, which is below {SNR}\n"
+    if float(user_detail["txLinkError"]) > 0:
         alert = True
-
+        alert_reason_message += f"- There are {user_detail['txLinkError']} txLinkErrors"
+    if float(user_detail["rxLinkError"]) > 0:
+        alert = True
+        alert_reason_message += f"- There are {user_detail['rxLinkError']} rxLinkErrors"
+    
     if alert:
         print("**sending email**")
 
-        message = f"DNA Center VIP Client Alert:\n" \
-                f" Please review the information for the VIP Client-{MAC_CLIENT}:\n" \
-                f"Location: {location}\n" \
-                f"AP: {ap_name}\n" \
-                f"Health: {client_health}\n" \
-                f"SNR: {snr}\n\n" \
-                f"Client info JSON:\n"
+        # Retrieve health scores from other clients of users
+        all_health_scores = get_all_health_scores_from_user(user_details)
 
-        message += json.dumps(client_info, indent=4)
+        # Turn all_health_scores into message
+        all_health_scores_message = convert_all_health_scores_dict_to_message(all_health_scores)
 
-        if user_detail:
-            message += json.dumps(user_detail, indent=4)
+        message = f"""
+DNA Center VIP Client Alert:
+Please review the information for the Client-{user_detail['hostMac']}, which belongs to user {user_detail['userId']}:
+Connection Status: {user_detail['connectionStatus']}
+Location: {user_detail['location']}
+Health: {overall_health_score}
+RSSI: {rssi}
+Issue Count: {issue_count}
+SNR: {user_detail['snr']}
+txRate: {user_detail['txRate']}
+rxRate: {user_detail['rxRate']}
+
+Onboarding:
+- Average Run Duration: {user_detail['onboarding']['averageRunDuration']}
+- Max Run Duration: {user_detail['onboarding']['maxRunDuration']}
+- Average Assocation Duration: {user_detail['onboarding']['averageAssocDuration']}
+- Max Assocation Duration: {user_detail['onboarding']['maxAssocDuration']}
+- Average Authentication Duration: {user_detail['onboarding']['averageAuthDuration']}
+- Max DHCP Duration: {user_detail['onboarding']['maxDhcpDuration']}
+- Latest Root Cause List: {user_detail["onboarding"]['latestRootCauseList']}
+
+Health scores of other clients of user {user_detail['userId']}:
+{all_health_scores_message}
+
+The reason for the alert:\n{alert_reason_message}
+"""
+
+        send_email(user_detail['userId'], message)
         
-        # send message from slack bot to the specified space: #bot-project
-        send_email(MAC_CLIENT, message)
-
-        alert_count += 1
-        time.sleep(5)
 
 # Main function
 def main():
@@ -141,32 +181,15 @@ def main():
     dna_center = DNACenterAPI(username=DNAC_USERNAME, password=DNAC_PASSWORD, base_url=DNAC_BASE_URL, verify=False)
     print("**Successfuly connected to DNAC**")
 
-    user_details = []
     for USER in USERS:
         try:
-            user_detail = dna_center.users.get_user_enrichtment_details(headers={'entity_type': 'network_user_id', 'entity_value': USER})
-            user_details.append(user_detail)
-        except Exception as e:
-            print(e)
-            print(f"No user data for user: {USER}")
-
-    while alert_count < MAX_ALERT: # Can also be changed to: while True
-        if user_details: # If user_details non-empty, then populate MAC_CLIENTS with mac_clients in user_details
+            user_details = dna_center.users.get_user_enrichment_details(headers={'entity_type': 'network_user_id', 'entity_value': USER})
             for user_detail in user_details:
-                # get mac_client from each user_detail
-                connected_devices = user_detail[0]["connectedDevice"]
-                mac_addresses_connected_devices = []
-                for dev in connected_devices:
-                    mac_addresses_connected_devices.append(dev["deviceDetails"]["macAddress"])
-
-                # check health score of each client in user_detail
-                for mac_address in mac_addresses_connected_devices:
-                    check_general_health(dna_center, mac_address, user_detail)
-
-        else: 
-            print('**DNA Center clients to be monitored: **', MAC_CLIENTS)
-            for MAC_CLIENT in MAC_CLIENTS:
-                check_general_health(dna_center, MAC_CLIENT)
+                # Check the health
+                check_health_from_user_detail(user_detail, user_details)
+        except Exception as e:
+            print("An exception has occurred:")
+            print(e)
 
 if __name__ == '__main__':
     main()
